@@ -15,3 +15,5 @@
 - https://upcloud.com/resources/tutorials/get-started-wireguard-vpn
 - https://www.wireguard.com/quickstart/
 - https://man7.org/linux/man-pages/man8/wg-quick.8.html
+- https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions
+- https://github.com/marketplace/actions/wireguard-ssh
