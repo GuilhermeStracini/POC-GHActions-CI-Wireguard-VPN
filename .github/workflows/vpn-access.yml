@@ -12,10 +12,10 @@ jobs:
     - name: Configure Wireguard SSH
       uses: omahn/wireguard-ssh-github-action@v1.4
       with:
-        peer_ip: ${{ secrets.PEER_IP }}
-        ssh_public_key: ${{ secrets.PUBLIC_KEY }}
+        peer_ip: '${{ secrets.PEER_IP }}'
+        ssh_public_key: '${{ secrets.PUBLIC_KEY }}'
         peer_port: '51820'
-        github_ip: ${{ secrets.CLIENT_IP }}
+        github_ip: '${{ secrets.CLIENT_IP }}'
         ssh_connection_timeout: '300'
         session_timeout: 3600
 
