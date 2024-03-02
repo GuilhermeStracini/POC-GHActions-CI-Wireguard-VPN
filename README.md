@@ -5,3 +5,13 @@
 [![GitHub last commit](https://img.shields.io/github/last-commit/GuilhermeStracini/POC-GHActions-CI-Wireguard-VPN)](https://github.com/GuilhermeStracini/POC-GHActions-CI-Wireguard-VPN)
 
 🔬 Proof of Concept of SSH connection using Wireguard VPN through GitHub Actions
+
+## Useful links
+
+- https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm
+- https://www.oracle.com/ie/cloud/free/
+- https://www.reddit.com/r/IndianGaming/comments/w69aa5/create_free_vpn_in_oracle_cloud/
+- https://github.com/pivpn/pivpn
+- https://upcloud.com/resources/tutorials/get-started-wireguard-vpn
+- https://www.wireguard.com/quickstart/
+- https://man7.org/linux/man-pages/man8/wg-quick.8.html
