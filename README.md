@@ -15,3 +15,7 @@
 - https://upcloud.com/resources/tutorials/get-started-wireguard-vpn
 - https://www.wireguard.com/quickstart/
 - https://man7.org/linux/man-pages/man8/wg-quick.8.html
+- https://github.com/egor-tensin/setup-wireguard
+- https://github.com/omahn/wireguard-ssh-github-action
+- https://github.com/niklaskeerl/easy-wireguard-action
+- https://docs.github.com/en/actions/using-github-hosted-runners/connecting-to-a-private-network/using-wireguard-to-create-a-network-overlay
