@@ -9,15 +9,13 @@ jobs:
 
     steps:
 
-    - name: Configure Wireguard SSH
-      uses: omahn/wireguard-ssh-github-action@v1.4
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up WireGuard Connection
+      uses: niklaskeerl/easy-wireguard-action@v2
       with:
-        peer_ip: ${{ secrets.PEER_IP }}
-        SSH_PUBLIC_KEY: ${{ secrets.PUBLIC_KEY }}
-        peer_port: '51820'
-        github_ip: '${{ secrets.CLIENT_IP }}'
-        ssh_connection_timeout: '300'
-        session_timeout: 3600
+        WG_CONFIG_FILE: ${{ secrets.WIREGUARD_CONFIG }}
 
     - name: cURL webhooks.site
       run: |
