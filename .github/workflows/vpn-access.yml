@@ -12,11 +12,29 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Set up WireGuard Connection
-      uses: niklaskeerl/easy-wireguard-action@v2
-      with:
-        WG_CONFIG_FILE: ${{ secrets.WIREGUARD_CONFIG }}
-
-    - name: cURL webhooks.site
+    - name: cURL without VPN
       run: |
-        curl -A "POC-GHActions-CI-Wireguard-VPN (+https://github.com/GuilhermeStracini/POC-GHActions-CI-Wireguard-VPN)" ${{ secrets.WEBHOOK_ENDPOINT }}
+        curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-1
+
+    - name: Attach WireGuard connection
+      shell: bash
+      run: |
+        sudo apt install resolvconf
+        sudo apt install wireguard
+        echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
+        sudo chmod 600 wg0.conf
+        sudo wg-quick up ./wg0.conf      
+
+    - name: cURL without VPN
+      run: |
+        curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=with-vpn-1
+
+    - name: Detach WireGuard connection
+      shell: bash
+      run: sudo wg-quick down ./wg0.conf
+
+    - name: cURL without VPN
+      run: |
+        curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-2
+
+   
