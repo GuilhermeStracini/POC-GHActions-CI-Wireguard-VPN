@@ -8,14 +8,14 @@
 
 ## Useful links
 
+- https://docs.github.com/en/actions/using-github-hosted-runners/connecting-to-a-private-network/using-wireguard-to-create-a-network-overlay
 - https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm
+- https://github.com/egor-tensin/setup-wireguard
+- https://github.com/niklaskeerl/easy-wireguard-action
+- https://github.com/omahn/wireguard-ssh-github-action
+- https://github.com/pivpn/pivpn
+- https://man7.org/linux/man-pages/man8/wg-quick.8.html
+- https://upcloud.com/resources/tutorials/get-started-wireguard-vpn
 - https://www.oracle.com/ie/cloud/free/
 - https://www.reddit.com/r/IndianGaming/comments/w69aa5/create_free_vpn_in_oracle_cloud/
-- https://github.com/pivpn/pivpn
-- https://upcloud.com/resources/tutorials/get-started-wireguard-vpn
 - https://www.wireguard.com/quickstart/
-- https://man7.org/linux/man-pages/man8/wg-quick.8.html
-- https://github.com/egor-tensin/setup-wireguard
-- https://github.com/omahn/wireguard-ssh-github-action
-- https://github.com/niklaskeerl/easy-wireguard-action
-- https://docs.github.com/en/actions/using-github-hosted-runners/connecting-to-a-private-network/using-wireguard-to-create-a-network-overlay
