@@ -6,6 +6,7 @@ on:
 jobs:
  test-vpn:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
 
@@ -16,23 +17,44 @@ jobs:
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-1
 
+    - name: Install WireGuard
+      shell: bash
+      # Every sudo call gets stdin from /dev/null: ubuntu-latest is now Ubuntu 26.04, whose
+      # sudo is sudo-rs, which can leave a command (or its children) stopped when it has
+      # to deal with an inherited, non-terminal stdin.
+      run: |
+        sudo apt-get install -y resolvconf < /dev/null
+        sudo apt-get install -y wireguard < /dev/null
+
     - name: Attach WireGuard connection
       shell: bash
       env:
         WIREGUARD_CONFIG: ${{ secrets.WIREGUARD_CONFIG }}
       run: |
-        sudo apt-get install -y resolvconf
-        sudo apt-get install -y wireguard
         if [[ -z "$WIREGUARD_CONFIG" ]]; then
           echo "::notice::WIREGUARD_CONFIG is empty (Dependabot and fork runs do not receive repository secrets) - wg0 will come up without peers."
         fi
-        # Ubuntu 25.10+ (ubuntu-latest is now 26.04) confines wg-quick with an AppArmor
-        # profile that only allows configuration files under /etc/wireguard, so the
-        # config can no longer live in the workspace.
-        sudo install -d -m 700 /etc/wireguard
-        printf '%s\n' "$WIREGUARD_CONFIG" | sudo tee /etc/wireguard/wg0.conf > /dev/null
-        sudo chmod 600 /etc/wireguard/wg0.conf
-        sudo wg-quick up wg0
+        # Ubuntu 25.10+ confines wg-quick with an AppArmor profile that only allows
+        # configuration files under /etc/wireguard, so the config can no longer live in
+        # the workspace. Write it as the runner user first, then move it into place as
+        # root with the right ownership and mode (no data is piped into sudo).
+        (umask 077 && printf '%s\n' "$WIREGUARD_CONFIG" > "$RUNNER_TEMP/wg0.conf")
+        sudo install -D -m 600 "$RUNNER_TEMP/wg0.conf" /etc/wireguard/wg0.conf < /dev/null
+        rm -f "$RUNNER_TEMP/wg0.conf"
+        # Watchdog: if wg-quick stalls, show which process is stuck (and in what state)
+        # instead of hanging silently until the job timeout.
+        (
+          for _ in $(seq 1 90); do sleep 1; [[ -e "$RUNNER_TEMP/wg-quick.done" ]] && exit 0; done
+          echo "::group::wg-quick is taking too long - sudo/wg-quick process tree"
+          ps -eo pid,ppid,pgid,tpgid,tty,stat,wchan:20,cmd --forest | grep -E 'PID|sudo|wg-quick|wg |ip |resolvconf|resolvectl' || true
+          echo "::endgroup::"
+        ) &
+        watchdog=$!
+        rc=0
+        timeout --foreground -k 10 120 sudo wg-quick up wg0 < /dev/null || rc=$?
+        touch "$RUNNER_TEMP/wg-quick.done"
+        wait "$watchdog" 2>/dev/null || true
+        exit "$rc"
 
     - name: cURL with VPN
       run: |
@@ -41,11 +63,9 @@ jobs:
     - name: Detach WireGuard connection
       shell: bash
       run: |
-        sudo wg-quick down wg0
-        sudo rm -f /etc/wireguard/wg0.conf
+        timeout --foreground -k 10 60 sudo wg-quick down wg0 < /dev/null
+        sudo rm -f /etc/wireguard/wg0.conf < /dev/null
 
     - name: cURL without VPN
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-2
-
-   
