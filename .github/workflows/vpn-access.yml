@@ -5,15 +5,11 @@ on:
 
 jobs:
  test-vpn:
-    # Pinned to 24.04 on purpose. ubuntu-latest moved to Ubuntu 26.04, where this job
-    # began hanging in the apt-get install step: the runner is reaped after ~20 min with
-    # no logs and the run ends as "cancelled". A separate job on the same image
-    # (infisical-secrets-check) installs packages fine, so this is the intermittent
-    # 26.04 apt hang tracked in actions/runner-images#14716, not something in this
-    # workflow. 24.04 has been green here for months. Revisit ubuntu-latest once that
-    # image issue is resolved.
+    # ubuntu-latest moved to Ubuntu 26.04, where the apt-install step below
+    # intermittently hung until the runner was reaped (~20 min, no logs). 24.04 has been
+    # green here for months; revisit ubuntu-latest once that settles.
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
 
@@ -24,55 +20,40 @@ jobs:
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-1
 
-    # TEMPORARY DIAGNOSTIC SPLIT: the attach step was hanging until the runner was
-    # reaped (~20 min, no logs). Splitting install / prepare / bring-up means the
-    # earlier steps' logs survive the reap, so we can see exactly where it dies.
     - name: Install WireGuard
       shell: bash
       run: |
-        set -x
         sudo apt-get install -y resolvconf
         sudo apt-get install -y wireguard
-        echo "::notice::apt install completed"
 
-    - name: Prepare WireGuard config
+    - name: Attach WireGuard connection
       shell: bash
       env:
         WIREGUARD_CONFIG: ${{ secrets.WIREGUARD_CONFIG }}
       run: |
         if [[ -z "$WIREGUARD_CONFIG" ]]; then
-          echo "::warning::WIREGUARD_CONFIG is empty (Dependabot/fork runs get no repo secrets)."
+          echo "::warning::WIREGUARD_CONFIG is empty (Dependabot/fork runs get no repo secrets); wg0 will have no peer."
         fi
-        # Keep the config under /etc/wireguard: Ubuntu 25.10+ confines wg-quick with an
-        # AppArmor profile that only allows config files there (harmless on 24.04).
+        # Ubuntu 25.10+ confines wg-quick with an AppArmor profile that only allows
+        # config files under /etc/wireguard (harmless on 24.04).
         (umask 077 && printf '%s\n' "$WIREGUARD_CONFIG" > "$RUNNER_TEMP/wg0.conf")
         sudo install -d -m 700 /etc/wireguard
         sudo install -m 600 "$RUNNER_TEMP/wg0.conf" /etc/wireguard/wg0.conf
         rm -f "$RUNNER_TEMP/wg0.conf"
-        # Structural report only - no key material is printed.
-        echo "config bytes: $(sudo wc -c < /etc/wireguard/wg0.conf)"
-        echo "has [Interface]: $(sudo grep -c '^\[Interface\]' /etc/wireguard/wg0.conf || true)"
-        echo "has [Peer]:      $(sudo grep -c '^\[Peer\]' /etc/wireguard/wg0.conf || true)"
-        echo "has DNS line:    $(sudo grep -ci '^[[:space:]]*DNS' /etc/wireguard/wg0.conf || true)"
-        echo "has Address:     $(sudo grep -ci '^[[:space:]]*Address' /etc/wireguard/wg0.conf || true)"
-        echo "captures default route: $(sudo grep -Eci 'AllowedIPs.*(0\.0\.0\.0/0|::/0)' /etc/wireguard/wg0.conf || true)"
-        echo "::notice::config prepared"
-
-    - name: Bring up WireGuard connection
-      shell: bash
-      run: |
-        set -x
-        echo "::notice::about to run wg-quick up"
-        timeout -k 10 60 sudo wg-quick up wg0
-        echo "::notice::wg-quick up returned"
+        sudo wg-quick up wg0
 
     - name: cURL with VPN
       run: |
-        curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=with-vpn-1
+        curl --max-time 30 -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=with-vpn-1
 
     - name: Detach WireGuard connection
-      shell: bash
+      # Always tear the tunnel down. If WIREGUARD_CONFIG is a full-tunnel config
+      # (AllowedIPs 0.0.0.0/0 + DNS) and the peer is unreachable, bringing it up routes
+      # the runner's own link to GitHub into the dead tunnel. Without a guaranteed
+      # teardown the runner is stranded and GitHub reaps the job with no logs, instead
+      # of it failing cleanly here.
       if: always()
+      shell: bash
       run: |
         sudo wg-quick down wg0 || true
         sudo rm -f /etc/wireguard/wg0.conf
