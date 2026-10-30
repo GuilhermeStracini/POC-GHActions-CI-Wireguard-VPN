@@ -5,7 +5,11 @@ on:
 
 jobs:
  test-vpn:
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to Ubuntu 26.04, where the apt-install step below
+    # intermittently hung until the runner was reaped (~20 min, no logs). 24.04 has been
+    # green here for months; revisit ubuntu-latest once that settles.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
 
     steps:
 
@@ -16,25 +20,44 @@ jobs:
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-1
 
+    - name: Install WireGuard
+      shell: bash
+      run: |
+        sudo apt-get install -y resolvconf
+        sudo apt-get install -y wireguard
+
     - name: Attach WireGuard connection
       shell: bash
+      env:
+        WIREGUARD_CONFIG: ${{ secrets.WIREGUARD_CONFIG }}
       run: |
-        sudo apt install resolvconf
-        sudo apt install wireguard
-        echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
-        sudo chmod 600 wg0.conf
-        sudo wg-quick up ./wg0.conf      
+        if [[ -z "$WIREGUARD_CONFIG" ]]; then
+          echo "::warning::WIREGUARD_CONFIG is empty (Dependabot/fork runs get no repo secrets); wg0 will have no peer."
+        fi
+        # Ubuntu 25.10+ confines wg-quick with an AppArmor profile that only allows
+        # config files under /etc/wireguard (harmless on 24.04).
+        (umask 077 && printf '%s\n' "$WIREGUARD_CONFIG" > "$RUNNER_TEMP/wg0.conf")
+        sudo install -d -m 700 /etc/wireguard
+        sudo install -m 600 "$RUNNER_TEMP/wg0.conf" /etc/wireguard/wg0.conf
+        rm -f "$RUNNER_TEMP/wg0.conf"
+        sudo wg-quick up wg0
 
-    - name: cURL without VPN
+    - name: cURL with VPN
       run: |
-        curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=with-vpn-1
+        curl --max-time 30 -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=with-vpn-1
 
     - name: Detach WireGuard connection
+      # Always tear the tunnel down. If WIREGUARD_CONFIG is a full-tunnel config
+      # (AllowedIPs 0.0.0.0/0 + DNS) and the peer is unreachable, bringing it up routes
+      # the runner's own link to GitHub into the dead tunnel. Without a guaranteed
+      # teardown the runner is stranded and GitHub reaps the job with no logs, instead
+      # of it failing cleanly here.
+      if: always()
       shell: bash
-      run: sudo wg-quick down ./wg0.conf
+      run: |
+        sudo wg-quick down wg0 || true
+        sudo rm -f /etc/wireguard/wg0.conf
 
     - name: cURL without VPN
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-2
-
-   
