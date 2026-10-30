@@ -19,12 +19,19 @@ jobs:
 
     - name: Install WireGuard
       shell: bash
-      # Every sudo call gets stdin from /dev/null: ubuntu-latest is now Ubuntu 26.04, whose
-      # sudo is sudo-rs, which can leave a command (or its children) stopped when it has
-      # to deal with an inherited, non-terminal stdin.
+      # ubuntu-latest is now Ubuntu 26.04, where needrestart runs after every apt
+      # operation in "Ubuntu mode" and restarts services automatically. On the hosted
+      # image that includes hosted-compute-agent.service - the service this very job
+      # runs under - so a restart kills the runner and the job hangs until GitHub
+      # times it out, with no logs. Nothing on a throwaway VM needs restarting, so
+      # needrestart is suspended for the apt calls (NEEDRESTART_SUSPEND is its
+      # documented switch for that).
       run: |
-        sudo apt-get install -y resolvconf < /dev/null
-        sudo apt-get install -y wireguard < /dev/null
+        echo "::group::Services needrestart would restart (read-only check)"
+        sudo needrestart -b -r l 2>&1 | grep -E '^NEEDRESTART-(SVC|KSTA)' || true
+        echo "::endgroup::"
+        timeout -k 10 300 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y resolvconf
+        timeout -k 10 300 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y wireguard
 
     - name: Attach WireGuard connection
       shell: bash
@@ -37,9 +44,10 @@ jobs:
         # Ubuntu 25.10+ confines wg-quick with an AppArmor profile that only allows
         # configuration files under /etc/wireguard, so the config can no longer live in
         # the workspace. Write it as the runner user first, then move it into place as
-        # root with the right ownership and mode (no data is piped into sudo).
+        # root with the right ownership and mode.
         (umask 077 && printf '%s\n' "$WIREGUARD_CONFIG" > "$RUNNER_TEMP/wg0.conf")
-        sudo install -D -m 600 "$RUNNER_TEMP/wg0.conf" /etc/wireguard/wg0.conf < /dev/null
+        sudo install -d -m 700 /etc/wireguard
+        sudo install -m 600 "$RUNNER_TEMP/wg0.conf" /etc/wireguard/wg0.conf
         rm -f "$RUNNER_TEMP/wg0.conf"
         # Watchdog: if wg-quick stalls, show which process is stuck (and in what state)
         # instead of hanging silently until the job timeout.
@@ -51,7 +59,7 @@ jobs:
         ) &
         watchdog=$!
         rc=0
-        timeout --foreground -k 10 120 sudo wg-quick up wg0 < /dev/null || rc=$?
+        timeout -k 10 120 sudo wg-quick up wg0 || rc=$?
         touch "$RUNNER_TEMP/wg-quick.done"
         wait "$watchdog" 2>/dev/null || true
         exit "$rc"
@@ -63,8 +71,8 @@ jobs:
     - name: Detach WireGuard connection
       shell: bash
       run: |
-        timeout --foreground -k 10 60 sudo wg-quick down wg0 < /dev/null
-        sudo rm -f /etc/wireguard/wg0.conf < /dev/null
+        timeout -k 10 60 sudo wg-quick down wg0
+        sudo rm -f /etc/wireguard/wg0.conf
 
     - name: cURL without VPN
       run: |
