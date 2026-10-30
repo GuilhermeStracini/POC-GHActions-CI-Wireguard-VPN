@@ -24,25 +24,47 @@ jobs:
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-1
 
-    - name: Attach WireGuard connection
+    # TEMPORARY DIAGNOSTIC SPLIT: the attach step was hanging until the runner was
+    # reaped (~20 min, no logs). Splitting install / prepare / bring-up means the
+    # earlier steps' logs survive the reap, so we can see exactly where it dies.
+    - name: Install WireGuard
+      shell: bash
+      run: |
+        set -x
+        sudo apt-get install -y resolvconf
+        sudo apt-get install -y wireguard
+        echo "::notice::apt install completed"
+
+    - name: Prepare WireGuard config
       shell: bash
       env:
         WIREGUARD_CONFIG: ${{ secrets.WIREGUARD_CONFIG }}
       run: |
-        sudo apt-get install -y resolvconf
-        sudo apt-get install -y wireguard
         if [[ -z "$WIREGUARD_CONFIG" ]]; then
-          echo "::notice::WIREGUARD_CONFIG is empty (Dependabot and fork runs do not receive repository secrets) - wg0 will come up without peers."
+          echo "::warning::WIREGUARD_CONFIG is empty (Dependabot/fork runs get no repo secrets)."
         fi
         # Keep the config under /etc/wireguard: Ubuntu 25.10+ confines wg-quick with an
-        # AppArmor profile that only allows config files there. This is harmless on 24.04
-        # and means a future move to a newer runner won't hit the "Permission denied"
-        # that ./wg0.conf would cause.
+        # AppArmor profile that only allows config files there (harmless on 24.04).
         (umask 077 && printf '%s\n' "$WIREGUARD_CONFIG" > "$RUNNER_TEMP/wg0.conf")
         sudo install -d -m 700 /etc/wireguard
         sudo install -m 600 "$RUNNER_TEMP/wg0.conf" /etc/wireguard/wg0.conf
         rm -f "$RUNNER_TEMP/wg0.conf"
-        sudo wg-quick up wg0
+        # Structural report only - no key material is printed.
+        echo "config bytes: $(sudo wc -c < /etc/wireguard/wg0.conf)"
+        echo "has [Interface]: $(sudo grep -c '^\[Interface\]' /etc/wireguard/wg0.conf || true)"
+        echo "has [Peer]:      $(sudo grep -c '^\[Peer\]' /etc/wireguard/wg0.conf || true)"
+        echo "has DNS line:    $(sudo grep -ci '^[[:space:]]*DNS' /etc/wireguard/wg0.conf || true)"
+        echo "has Address:     $(sudo grep -ci '^[[:space:]]*Address' /etc/wireguard/wg0.conf || true)"
+        echo "captures default route: $(sudo grep -Eci 'AllowedIPs.*(0\.0\.0\.0/0|::/0)' /etc/wireguard/wg0.conf || true)"
+        echo "::notice::config prepared"
+
+    - name: Bring up WireGuard connection
+      shell: bash
+      run: |
+        set -x
+        echo "::notice::about to run wg-quick up"
+        timeout -k 10 60 sudo wg-quick up wg0
+        echo "::notice::wg-quick up returned"
 
     - name: cURL with VPN
       run: |
@@ -50,8 +72,9 @@ jobs:
 
     - name: Detach WireGuard connection
       shell: bash
+      if: always()
       run: |
-        sudo wg-quick down wg0
+        sudo wg-quick down wg0 || true
         sudo rm -f /etc/wireguard/wg0.conf
 
     - name: cURL without VPN
