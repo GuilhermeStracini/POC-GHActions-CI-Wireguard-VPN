@@ -25,7 +25,7 @@ jobs:
         sudo chmod 600 wg0.conf
         sudo wg-quick up ./wg0.conf      
 
-    - name: cURL without VPN
+    - name: cURL with VPN
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=with-vpn-1
 
