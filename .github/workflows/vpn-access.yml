@@ -3,9 +3,17 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: write # list/delete the peer lock artifacts
+
+env:
+  PEER_LOCK_NAME: wireguard-peer-lock
+
 jobs:
  test-vpn:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
 
@@ -16,25 +24,94 @@ jobs:
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-1
 
-    - name: Attach WireGuard connection
+    # WireGuard allows a single endpoint per peer key, so two runs sharing
+    # WIREGUARD_CONFIG would kick each other off the tunnel. Each run publishes
+    # a lock artifact and waits for every older lock owned by a still-running
+    # workflow run to be released (lowest artifact id goes first).
+    - name: Create WireGuard peer lock
       shell: bash
       run: |
-        sudo apt install resolvconf
-        sudo apt install wireguard
-        echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
-        sudo chmod 600 wg0.conf
-        sudo wg-quick up ./wg0.conf      
+        mkdir -p "$RUNNER_TEMP/peer-lock"
+        printf 'run_id=%s\nrun_attempt=%s\nref=%s\ncreated=%s\n' \
+          "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_REF" "$(date -u +%FT%TZ)" \
+          > "$RUNNER_TEMP/peer-lock/lock.txt"
+
+    - name: Publish WireGuard peer lock
+      id: peer-lock
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ env.PEER_LOCK_NAME }}
+        path: ${{ runner.temp }}/peer-lock/lock.txt
+        retention-days: 1
+        overwrite: true
+
+    - name: Wait for WireGuard peer to be free
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        MY_LOCK_ID: ${{ steps.peer-lock.outputs.artifact-id }}
+      run: |
+        for attempt in $(seq 1 120); do
+          blockers=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$PEER_LOCK_NAME&per_page=100" \
+            --jq ".artifacts[] | select(.expired == false and .id < $MY_LOCK_ID and .workflow_run.id != $GITHUB_RUN_ID) | .workflow_run.id" \
+            | sort -u | while read -r run; do
+                status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .status 2>/dev/null || echo completed)
+                [ "$status" != "completed" ] && echo "$run"
+              done || true)
+          if [ -z "$blockers" ]; then
+            echo "WireGuard peer is free (lock artifact $MY_LOCK_ID)"
+            exit 0
+          fi
+          echo "Peer in use by run(s): $(echo $blockers) - waiting (attempt $attempt)"
+          sleep 10
+        done
+        echo "::error::Timed out waiting for the WireGuard peer lock"
+        exit 1
+
+    - name: Attach WireGuard connection
+      shell: bash
+      env:
+        WIREGUARD_CONFIG: ${{ secrets.WIREGUARD_CONFIG }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y resolvconf wireguard
+        # Ubuntu 26.04 confines wg-quick with AppArmor: it may only read configs
+        # from /etc/wireguard, not from the workspace under /home/runner.
+        sudo install -d -m 700 /etc/wireguard
+        printf '%s\n' "$WIREGUARD_CONFIG" | sudo tee /etc/wireguard/wg0.conf > /dev/null
+        sudo chmod 600 /etc/wireguard/wg0.conf
+        sudo wg-quick up wg0
+
+    - name: Check WireGuard handshake
+      shell: bash
+      run: |
+        for i in $(seq 1 20); do
+          ping -c1 -W1 1.1.1.1 > /dev/null 2>&1 || true
+          hs=$(sudo wg show wg0 latest-handshakes | awk '{print $2}' | sort -n | tail -1)
+          if [ "${hs:-0}" -gt 0 ]; then echo "Handshake OK"; break; fi
+          sleep 1
+        done
+        sudo wg show wg0 | grep -vE 'private key|preshared key'
+        if [ "${hs:-0}" -eq 0 ]; then echo "::error::No WireGuard handshake with peer - check that the VPN server is up and reachable"; exit 1; fi
 
     - name: cURL with VPN
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=with-vpn-1
 
     - name: Detach WireGuard connection
+      if: always()
       shell: bash
-      run: sudo wg-quick down ./wg0.conf
+      run: |
+        sudo wg-quick down wg0 || true
+        sudo rm -f /etc/wireguard/wg0.conf
+
+    - name: Release WireGuard peer lock
+      if: always() && steps.peer-lock.outputs.artifact-id != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/${{ steps.peer-lock.outputs.artifact-id }}" || true
 
     - name: cURL without VPN
       run: |
         curl -A "POC-GHActions-CI-Wireguard-VPN" ${{ secrets.WEBHOOK_ENDPOINT }}?type=without-vpn-2
-
-   
